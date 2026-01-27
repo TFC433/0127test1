@@ -1,9 +1,9 @@
 /**
  * data/opportunity-reader.js
  * 專門負責讀取所有與「機會案件」相關資料的類別
- * * @version 6.1.1 (Fix: Unify Search Logic)
+ * * @version 6.1.2 (Fix: Remove Aggregation Logic)
  * @date 2026-01-27
- * @description 實作 Strict Mode 依賴注入，並確保內部引用的其他 Reader 接收正確的 ID。
+ * @description 實作 Strict Mode，移除內部 require 與聚合邏輯，回歸純粹的資料讀取職責。
  */
 
 const BaseReader = require('./base-reader');
@@ -208,105 +208,6 @@ class OpportunityReader extends BaseReader {
                 hasPrev: page > 1 
             }
         };
-    }
-
-    /**
-     * 按縣市聚合機會案件數量
-     */
-    async getOpportunitiesByCounty(opportunityType = null) {
-        try {
-            const [opportunities, companies] = await Promise.all([
-                this.getOpportunities(),
-                this.getCompanyList()
-            ]);
-            
-            const safeOpportunities = Array.isArray(opportunities) ? opportunities : [];
-            const safeCompanies = Array.isArray(companies) ? companies : [];
-
-            let filteredOpportunities = opportunityType
-                ? safeOpportunities.filter(opp => opp.opportunityType === opportunityType)
-                : safeOpportunities;
-            
-            const companyToCountyMap = new Map(safeCompanies.map(c => [c.companyName, c.county]));
-
-            const countyCounts = {};
-            filteredOpportunities.forEach(opp => {
-                const county = companyToCountyMap.get(opp.customerCompany);
-                if (county) {
-                    countyCounts[county] = (countyCounts[county] || 0) + 1;
-                }
-            });
-
-            return Object.entries(countyCounts).map(([county, count]) => ({ county, count }));
-        } catch (error) {
-            console.error('❌ [OpportunityReader] getOpportunitiesByCounty 錯誤:', error);
-            return [];
-        }
-    }
-
-    /**
-     * 按階段聚合機會案件
-     */
-    async getOpportunitiesByStage() {
-        try {
-            const [opportunities, systemConfig] = await Promise.all([
-                this.getOpportunities(),
-                this.getSystemConfig()
-            ]);
-            
-            const safeOpportunities = Array.isArray(opportunities) ? opportunities : [];
-            const stages = systemConfig['機會階段'] || [];
-            const stageGroups = {};
-
-            // 初始化所有階段
-            stages.forEach(stage => {
-                stageGroups[stage.value] = { name: stage.note || stage.value, opportunities: [], count: 0 };
-            });
-
-            // 分類
-            safeOpportunities.forEach(opp => {
-                if (opp.currentStatus === '進行中') {
-                    const stageKey = opp.currentStage;
-                    if (stageGroups[stageKey]) {
-                        stageGroups[stageKey].opportunities.push(opp);
-                        stageGroups[stageKey].count++;
-                    }
-                }
-            });
-            return stageGroups;
-        } catch (error) {
-            console.error('❌ [OpportunityReader] getOpportunitiesByStage 錯誤:', error);
-            return {};
-        }
-    }
-
-    // --- 內部輔助：動態載入其他 Reader (避免循環依賴) ---
-    async getCompanyList() {
-        try {
-            const CompanyReader = require('./company-reader');
-            // ★★★ 依賴注入修正：傳遞 targetSpreadsheetId ★★★
-            const companyReader = new CompanyReader(this.sheets, this.targetSpreadsheetId);
-            return await companyReader.getCompanyList();
-        } catch (e) {
-            console.warn('⚠️ 無法讀取公司列表:', e.message);
-            return [];
-        }
-    }
-
-    async getSystemConfig() {
-        try {
-            const SystemReader = require('./system-reader');
-            // ★★★ 依賴注入修正：傳遞 targetSpreadsheetId ★★★
-            // 注意：若 SystemReader 在未來使用不同的 ID，這裡需要透過 Service 層處理。
-            // 目前階段我們假設 SystemReader 能接受與 Opportunity 同樣的 Config (兼容模式)。
-            // 或者 SystemReader 應該從 Container 注入，而不是內部 new。
-            // 但為了不破壞現有結構，我們傳遞當前的 ID。
-            const systemReader = new SystemReader(this.sheets, this.targetSpreadsheetId);
-            return await systemReader.getSystemConfig();
-        } catch (e) {
-            console.warn('⚠️ 無法讀取系統設定:', e.message);
-            return {};
-        }
     }
 }
 

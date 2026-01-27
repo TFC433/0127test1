@@ -9,7 +9,7 @@
 /**
  * services/opportunity-service.js
  * 機會案件業務邏輯層 (Service Layer)
- * * @version 6.1.1 (Fix: Unify Search Logic to Reader)
+ * * @version 6.1.2 (Fix: Migrate Stage Aggregation)
  * @date 2026-01-27
  * @description 負責處理與「機會案件」相關的 CRUD、關聯管理與自動日誌。
  * 依賴注入：Readers (Opportunity, Interaction, EventLog, Contact, System) & Writers (Company, Contact, Opportunity, Interaction) & Config
@@ -511,6 +511,43 @@ class OpportunityService {
         } catch (error) {
             console.error('❌ [OpportunityService] getOpportunitiesByCounty 錯誤:', error);
             return [];
+        }
+    }
+
+    /**
+     * [Standard A] 按階段聚合機會案件
+     * * Migrated from Reader to Service to avoid cross-reader dependency (SystemReader)
+     */
+    async getOpportunitiesByStage() {
+        try {
+            const [opportunities, systemConfig] = await Promise.all([
+                this.opportunityReader.getOpportunities(),
+                this.systemReader.getSystemConfig()
+            ]);
+            
+            const safeOpportunities = Array.isArray(opportunities) ? opportunities : [];
+            const stages = systemConfig['機會階段'] || [];
+            const stageGroups = {};
+
+            // 初始化所有階段
+            stages.forEach(stage => {
+                stageGroups[stage.value] = { name: stage.note || stage.value, opportunities: [], count: 0 };
+            });
+
+            // 分類
+            safeOpportunities.forEach(opp => {
+                if (opp.currentStatus === '進行中') {
+                    const stageKey = opp.currentStage;
+                    if (stageGroups[stageKey]) {
+                        stageGroups[stageKey].opportunities.push(opp);
+                        stageGroups[stageKey].count++;
+                    }
+                }
+            });
+            return stageGroups;
+        } catch (error) {
+            console.error('❌ [OpportunityService] getOpportunitiesByStage 錯誤:', error);
+            return {};
         }
     }
 
