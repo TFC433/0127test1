@@ -1,8 +1,8 @@
 /**
  * data/opportunity-reader.js
  * 專門負責讀取所有與「機會案件」相關資料的類別
- * * @version 5.0.0 (Phase 5 Refactoring)
- * @date 2026-01-09
+ * * @version 6.1.1 (Fix: Unify Search Logic)
+ * @date 2026-01-27
  * @description 實作 Strict Mode 依賴注入，並確保內部引用的其他 Reader 接收正確的 ID。
  */
 
@@ -145,15 +145,17 @@ class OpportunityReader extends BaseReader {
 
     /**
      * 搜尋並分頁機會案件
+     * 負責執行查詢、過濾、排序與分頁的單一真相
      */
-    async searchOpportunities(query, page = 1, filters = {}) {
+    async searchOpportunities(query, page = 1, filters = {}, sortOptions = null) {
         let opportunities = await this.getOpportunities();
         if (!Array.isArray(opportunities)) opportunities = [];
 
+        // 1. Keyword Search
         if (query) {
             const searchTerm = query.toLowerCase();
             opportunities = opportunities.filter(o => {
-                if (searchTerm.startsWith('opp') && o.opportunityId.toLowerCase() === searchTerm) {
+                if (searchTerm.startsWith('opp') && o.opportunityId && o.opportunityId.toLowerCase() === searchTerm) {
                     return true;
                 }
                 return (o.opportunityName && o.opportunityName.toLowerCase().includes(searchTerm)) ||
@@ -161,10 +163,34 @@ class OpportunityReader extends BaseReader {
             });
         }
 
+        // 2. Attribute Filters
         if (filters.assignee) opportunities = opportunities.filter(o => o.assignee === filters.assignee);
         if (filters.type) opportunities = opportunities.filter(o => o.opportunityType === filters.type);
         if (filters.stage) opportunities = opportunities.filter(o => o.currentStage === filters.stage);
         
+        // 3. Sorting (若有指定排序選項則執行，否則維持 getOpportunities 的預設排序)
+        if (sortOptions && sortOptions.field) {
+            const field = sortOptions.field;
+            const dir = sortOptions.direction === 'asc' ? 1 : -1;
+            
+            opportunities.sort((a, b) => {
+                let valA, valB;
+                // Special handling for legacy time field fallback
+                if (field === 'lastUpdateTime') {
+                    valA = new Date(a.lastUpdateTime || a.createdTime).getTime();
+                    valB = new Date(b.lastUpdateTime || b.createdTime).getTime();
+                } else {
+                    valA = a[field];
+                    valB = b[field];
+                }
+                
+                if (valA < valB) return -1 * dir;
+                if (valA > valB) return 1 * dir;
+                return 0;
+            });
+        }
+
+        // 4. Pagination
         if (!page || page <= 0) {
             return opportunities;
         }

@@ -9,8 +9,8 @@
 /**
  * services/opportunity-service.js
  * 機會案件業務邏輯層 (Service Layer)
- * * @version 6.1.0 (Fix: Layering Compliance - Proxy Methods)
- * @date 2026-01-20
+ * * @version 6.1.1 (Fix: Unify Search Logic to Reader)
+ * @date 2026-01-27
  * @description 負責處理與「機會案件」相關的 CRUD、關聯管理與自動日誌。
  * 依賴注入：Readers (Opportunity, Interaction, EventLog, Contact, System) & Writers (Company, Contact, Opportunity, Interaction) & Config
  */
@@ -516,72 +516,17 @@ class OpportunityService {
 
     /**
      * [Standard A] 搜尋機會案件
-     * * 邏輯已移至 Service 層 (不再 Proxy Reader)
-     * * 包含: 狀態過濾、排序、關鍵字搜尋、屬性篩選、分頁
+     * * Service 卸除資料層邏輯，轉為代理角色
+     * * 由 Reader 負責執行查詢、過濾、排序與分頁 (單一真相)
      */
     async searchOpportunities(query, page, filters) {
         try {
-            // 1. Fetch Raw Data
-            const allOpportunities = await this.opportunityReader.getOpportunities();
-            
-            // 2. Filter Archived (Business Logic)
-            let opportunities = allOpportunities.filter(o => 
-                o.currentStatus !== this.config.CONSTANTS.OPPORTUNITY_STATUS.ARCHIVED
-            );
+            // 定義預設排序 (依最後更新時間倒序)
+            const sortOptions = { field: 'lastUpdateTime', direction: 'desc' };
 
-            // 3. Sort (Business Logic: lastUpdateTime or createdTime DESC)
-            opportunities.sort((a, b) => {
-                const timeA = new Date(a.lastUpdateTime || a.createdTime).getTime();
-                const timeB = new Date(b.lastUpdateTime || b.createdTime).getTime();
-                return timeB - timeA;
-            });
-
-            // 4. Search (Query)
-            if (query) {
-                const searchTerm = query.toLowerCase().trim();
-                opportunities = opportunities.filter(o => {
-                    // 若搜尋字串以 "opp" 開頭，則進行 ID 精準比對
-                    if (searchTerm.startsWith('opp') && o.opportunityId && o.opportunityId.toLowerCase() === searchTerm) {
-                        return true;
-                    }
-                    // 否則進行名稱或公司模糊搜尋
-                    const nameMatch = o.opportunityName && o.opportunityName.toLowerCase().includes(searchTerm);
-                    const companyMatch = o.customerCompany && o.customerCompany.toLowerCase().includes(searchTerm);
-                    return nameMatch || companyMatch;
-                });
-            }
-
-            // 5. Filters (Attributes)
-            if (filters) {
-                if (filters.assignee) opportunities = opportunities.filter(o => o.assignee === filters.assignee);
-                if (filters.type) opportunities = opportunities.filter(o => o.opportunityType === filters.type);
-                if (filters.stage) opportunities = opportunities.filter(o => o.currentStage === filters.stage);
-            }
-
-            // 6. Pagination & Response Shape
-            // 若 page <= 0，回傳純陣列 (Legacy behavior compatibility)
-            if (!page || page <= 0) {
-                return opportunities;
-            }
-
-            const pageSize = this.config.PAGINATION.OPPORTUNITIES_PER_PAGE;
-            const totalItems = opportunities.length;
-            const totalPages = Math.ceil(totalItems / pageSize);
-            const currentPage = parseInt(page);
-            const startIndex = (currentPage - 1) * pageSize;
-            
-            const paginatedItems = opportunities.slice(startIndex, startIndex + pageSize);
-
-            return {
-                data: paginatedItems,
-                pagination: { 
-                    current: currentPage, 
-                    total: totalPages, 
-                    totalItems: totalItems, 
-                    hasNext: currentPage < totalPages, 
-                    hasPrev: currentPage > 1 
-                }
-            };
+            // 直接委派 Reader 執行，不在此重複過濾或運算
+            // 注意：Archived 過濾已由 Reader.getOpportunities 內部處理
+            return await this.opportunityReader.searchOpportunities(query, page, filters, sortOptions);
 
         } catch (error) {
              console.error('❌ [OpportunityService] searchOpportunities 錯誤:', error);
