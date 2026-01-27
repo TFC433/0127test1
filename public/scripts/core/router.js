@@ -1,3 +1,9 @@
+/**
+ * @version 1.0.1
+ * @date 2026-01-27
+ * @purpose Hotfix：event-editor 最小改動 (參數傳遞 + 解除一次性載入鎖定)
+ */
+
 // public/scripts/core/router.js
 // 職責：處理 URL Hash 變更、頁面導航 (Navigation) 與 SPA 歷史紀錄
 
@@ -136,7 +142,9 @@ const Router = {
             if (window.dashboardManager?.refresh) await window.dashboardManager.refresh();
         } else {
             const loadFn = window.CRM_APP.pageModules[pageName];
-            const needsLoad = loadFn && (isDetailPage || !config.loaded);
+
+            // [Hotfix-1] event-editor：豁免一次性載入鎖定，允許每次進入都跑 loadFn
+            const needsLoad = loadFn && (isDetailPage || pageName === 'event-editor' || !config.loaded);
 
             if (needsLoad) {
                 try {
@@ -146,9 +154,17 @@ const Router = {
                         if (!paramValue) throw new Error(`缺少頁面所需參數: ${pageName}`);
                         await loadFn(paramValue);
                     } else {
-                        await loadFn();
+                        // [Hotfix-2] event-editor：把 params 傳進去；其他頁維持原行為 (不傳參)
+                        if (pageName === 'event-editor') {
+                            await loadFn(params);
+                        } else {
+                            await loadFn();
+                        }
                     }
-                    if (!isDetailPage) config.loaded = true;
+
+                    // [Hotfix-3] event-editor：不寫入 loaded=true，避免「鎖死」造成新增/編輯切換失效
+                    if (!isDetailPage && pageName !== 'event-editor') config.loaded = true;
+
                 } catch (err) {
                     console.error(`[Router] 載入頁面失敗:`, err);
                     targetView.innerHTML = `<div class="alert alert-error">載入失敗: ${err.message}</div>`;

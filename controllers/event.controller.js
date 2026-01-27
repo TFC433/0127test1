@@ -22,7 +22,13 @@ exports.createEventLog = async (req, res) => {
     try {
         const { eventLogService } = getServices(req);
         // 將 req.user.name (操作者) 傳入 Service，確保建立者正確
-        res.json(await eventLogService.createEventLog(req.body, req.user.name));
+        res.json(
+            await eventLogService.createEvent(
+                req.body,
+                { displayName: req.user.name }
+            )
+        );
+
     } catch (error) {
         handleApiError(res, error, 'Create Event Log');
     }

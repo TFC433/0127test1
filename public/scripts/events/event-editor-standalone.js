@@ -1,11 +1,12 @@
+/**
+ * @version 1.0.8
+ * @date 2026-01-27
+ * @purpose Hotfix：event-editor pageModules 參數相容，確保 #event-editor 可用
+ */
+
 // public/scripts/events/event-editor-standalone.js
 // 職責：獨立的事件編輯器控制器 (含 DT Placeholders)
 // (Refactored: Fix Zero-Dimension Trap via ResizeObserver - Loop Safe)
-/**
- * @version 1.0.6
- * @date 2026-01-22
- * @description [Fix] v1.0.5 baseline + Revert IoT deviceScale back to textarea (no UX regression).
- */
 
 // [Forensics Probe] Debug Counter
 window._DEBUG_EDITOR_OPEN_COUNT ||= 0;
@@ -167,46 +168,58 @@ const EventEditorStandalone = (() => {
             _modal.style.display = 'block';
             _lockScroll(); // [Fix] Lock scroll on open
             
-            _setLoading(true, '載入中...');
+            // ★★★ [Fix] 判斷是編輯還是新增 ★★★
+            if (eventId) {
+                _setLoading(true, '載入中...');
 
-            // 1. Main Event Data Fetch
-            // If this fails, we MUST close because we have nothing to edit.
-            let eventData = null;
-            try {
-                const result = await authedFetch(`/api/events/${eventId}`);
-                if (result.success) {
-                    eventData = result.data;
-                } else {
-                    throw new Error(result.error || 'Unknown Error');
+                // 1. Main Event Data Fetch
+                // If this fails, we MUST close because we have nothing to edit.
+                let eventData = null;
+                try {
+                    const result = await authedFetch(`/api/events/${eventId}`);
+                    if (result.success) {
+                        eventData = result.data;
+                    } else {
+                        throw new Error(result.error || 'Unknown Error');
+                    }
+                } catch (fetchError) {
+                    console.error('Main event fetch failed:', fetchError);
+                    showNotification('無法載入事件: ' + fetchError.message, 'error');
+                    _close();
+                    return; // Critical failure, stop here.
                 }
-            } catch (fetchError) {
-                console.error('Main event fetch failed:', fetchError);
-                showNotification('無法載入事件: ' + fetchError.message, 'error');
-                _close();
-                return; // Critical failure, stop here.
-            }
 
-            // 2. Setup Delete Button (UI)
-            if (_inputs.deleteBtn) {
-                _inputs.deleteBtn.style.display = 'block';
-                _inputs.deleteBtn.onclick = () => _confirmDelete(eventData.eventId, eventData.eventName);
-            }
+                // 2. Setup Delete Button (UI)
+                if (_inputs.deleteBtn) {
+                    _inputs.deleteBtn.style.display = 'block';
+                    _inputs.deleteBtn.onclick = () => _confirmDelete(eventData.eventId, eventData.eventName);
+                }
 
-            // 3. Populate Form with Robust Error Handling
-            // [Fix] If populate fails (e.g. linked opportunity 500), catch it and keep editor open.
-            try {
-                await _populateForm(eventData);
-            } catch (populateError) {
-                console.error('[EventEditor] Partial population failure:', populateError);
-                showNotification('關聯資料載入異常，但您仍可編輯主要內容', 'warning');
+                // 3. Populate Form with Robust Error Handling
+                // [Fix] If populate fails (e.g. linked opportunity 500), catch it and keep editor open.
+                try {
+                    await _populateForm(eventData);
+                } catch (populateError) {
+                    console.error('[EventEditor] Partial population failure:', populateError);
+                    showNotification('關聯資料載入異常，但您仍可編輯主要內容', 'warning');
+                }
+                
+                _setLoading(false);
+
+            } else {
+                // 新增模式：隱藏刪除按鈕，初始化類型
+                if (_inputs.deleteBtn) _inputs.deleteBtn.style.display = 'none';
+                _applyTypeSwitch('general', {});
+                // 設為一般狀態，不顯示 Loading
+                _setLoading(false);
             }
 
         } catch (e) {
             console.error(e);
             showNotification('發生未預期錯誤', 'error');
             _close();
-        } finally {
             _setLoading(false);
+        } finally {
             _isOpening = false; // [Fix] Release guard
         }
     }
@@ -526,3 +539,22 @@ const EventEditorStandalone = (() => {
 })();
 
 window.EventEditorStandalone = EventEditorStandalone;
+
+// ★★★ [Fix] 註冊 Router 模組 (相容性修正) ★★★
+if (window.CRM_APP) {
+    window.CRM_APP.pageModules['event-editor'] = async (params) => {
+        // [Hotfix] 參數相容性處理：
+        // 1. 若 params 為物件 (Router 修改後傳入)，取 params.eventId
+        // 2. 若 params 為字串 (相容舊有 detail 呼叫習慣或手動呼叫)，直接當 id
+        // 3. 若無參數 (params == null/undefined)，id 為 null (開啟新增模式)
+        
+        let id = null;
+        if (params && typeof params === 'object') {
+            id = params.eventId;
+        } else if (typeof params === 'string') {
+            id = params;
+        }
+        
+        await EventEditorStandalone.open(id);
+    };
+}
