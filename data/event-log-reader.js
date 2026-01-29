@@ -1,9 +1,10 @@
 /**
  * data/event-log-reader.js
  * 專門負責讀取所有與「事件紀錄 (Event Logs)」相關資料的類別
- * @version 5.1.0 (Phase 5 - Standard A Refactoring)
- * @date 2026-01-23
+ * @version 5.1.1 (Phase 5 - Standard A Refactoring - Shared Mapping Patch)
+ * @date 2026-01-29
  * @description [Standard A] 移除 Cross-Reader 依賴與業務邏輯，僅負責 Raw Data Access。
+ * [Patch] 公開 HEADER_TO_KEY_MAP 供 Writer 共用，確保 Single Source of Truth。
  */
 
 const BaseReader = require('./base-reader');
@@ -187,5 +188,8 @@ class EventLogReader extends BaseReader {
         return allLogs.find(log => log.eventId === eventId) || null;
     }
 }
+
+// [Patch] 公開映射表供 Writer 使用，確保單一真相
+EventLogReader.HEADER_TO_KEY_MAP = HEADER_TO_KEY_MAP;
 
 module.exports = EventLogReader;

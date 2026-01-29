@@ -1,13 +1,14 @@
 /**
  * data/event-log-writer.js
  * 事件紀錄寫入器
- * * @version 5.0.0 (Phase 5 Refactoring)
- * @date 2026-01-09
+ * * @version 5.1.0 (Phase 5 Refactoring - Shared Mapping Patch)
+ * @date 2026-01-29
  * @description 負責處理各類型事件 (General, IOT, DT, DX) 的建立、更新與刪除。
- * 實作 Strict Mode 依賴注入。
+ * [Patch] 移除內部 HEADER_TO_KEY_MAP，改用 EventLogReader.HEADER_TO_KEY_MAP 確保一致性。
  */
 
 const BaseWriter = require('./base-writer');
+const EventLogReader = require('./event-log-reader'); // [Patch] 引用 Reader 以獲取 Mapping
 
 class EventLogWriter extends BaseWriter {
     /**
@@ -22,38 +23,8 @@ class EventLogWriter extends BaseWriter {
         }
         this.eventLogReader = eventLogReader;
         
-        // 欄位對照表 (Internal Map)
-        this.HEADER_TO_KEY_MAP = {
-            '事件ID': 'eventId',
-            '事件名稱': 'eventName',
-            '關聯機會ID': 'opportunityId',
-            '關聯公司ID': 'companyId',
-            '建立者': 'creator',
-            '建立時間': 'createdTime',
-            '最後修改時間': 'lastModifiedTime',
-            '我方與會人員': 'ourParticipants',
-            '客戶與會人員': 'clientParticipants',
-            '會議地點': 'visitPlace',
-            '會議內容': 'eventContent',
-            '客戶提問': 'clientQuestions',
-            '客戶情報': 'clientIntelligence',
-            '備註': 'eventNotes',
-            '修訂版次': 'editCount',
-            
-            // IOT Specific
-            '設備規模': 'iot_deviceScale',
-            '生產線特徵': 'iot_lineFeatures',
-            '生產現況': 'iot_productionStatus',
-            'IoT現況': 'iot_iotStatus',
-            '痛點分類': 'iot_painPoints',
-            '客戶痛點說明': 'iot_painPointDetails',
-            '痛點分析與對策': 'iot_painPointAnalysis',
-            '系統架構': 'iot_systemArchitecture',
-
-            // DT Specific
-            '加工類型': 'dt_processingType',
-            '加工產業別': 'dt_industry'
-        };
+        // [Patch] 移除重複定義，統一使用 Reader 的定義
+        // this.HEADER_TO_KEY_MAP = { ... }; 
     }
 
     /**
@@ -90,6 +61,9 @@ class EventLogWriter extends BaseWriter {
         const eventId = `EVT${Date.now()}`;
         const sheetName = this._getSheetNameByType(data.eventType);
         const headers = this._getFieldsByType(data.eventType);
+        
+        // [Patch] 使用 Shared Mapping
+        const MAPPING = EventLogReader.HEADER_TO_KEY_MAP;
 
         // 準備寫入資料
         const rowData = headers.map(header => {
@@ -98,10 +72,10 @@ class EventLogWriter extends BaseWriter {
             // 特殊處理：IOT與DT的設備規模欄位名稱相同但 key 不同
             if (header === '設備規模') {
                 if (data.eventType === 'iot') key = 'iot_deviceScale';
-                else if (data.eventType === 'dt') key = 'dt_deviceScale'; // 雖然目前定義中 DT 也有設備規模，需確認 mapping
-                else key = this.HEADER_TO_KEY_MAP[header];
+                else if (data.eventType === 'dt') key = 'dt_deviceScale';
+                else key = MAPPING[header];
             } else {
-                key = this.HEADER_TO_KEY_MAP[header];
+                key = MAPPING[header];
             }
 
             if (header === '事件ID') return eventId;
@@ -135,6 +109,9 @@ class EventLogWriter extends BaseWriter {
         const sheetName = this._getSheetNameByType(data.eventType);
         const headers = this._getFieldsByType(data.eventType);
         const now = new Date().toISOString();
+        
+        // [Patch] 使用 Shared Mapping
+        const MAPPING = EventLogReader.HEADER_TO_KEY_MAP;
 
         // 1. 先讀取舊資料 (為了確保不覆蓋未傳入的欄位，且要計算修訂版次)
         // ★★★ 使用 this.targetSpreadsheetId ★★★
@@ -161,9 +138,9 @@ class EventLogWriter extends BaseWriter {
             if (header === '設備規模') {
                 if (data.eventType === 'iot') key = 'iot_deviceScale';
                 else if (data.eventType === 'dt') key = 'dt_deviceScale';
-                else key = this.HEADER_TO_KEY_MAP[header];
+                else key = MAPPING[header];
             } else {
-                key = this.HEADER_TO_KEY_MAP[header];
+                key = MAPPING[header];
             }
 
             // 特殊欄位自動處理

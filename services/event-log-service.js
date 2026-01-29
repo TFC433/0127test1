@@ -1,11 +1,12 @@
 /**
  * services/event-log-service.js
  * 事件紀錄服務邏輯
- * @version 5.1.2 (Phase 5 - Standard A Refactoring Hotfix: Move on eventType change)
- * @date 2026-01-23
+ * @version 5.1.4 (Phase 5 - Standard A Refactoring Hotfix: Fix DELETE & Mapping)
+ * @date 2026-01-29
  * @description
  * [Standard A] Join 邏輯集中在 Service；所有回傳物件皆 clone，避免污染 Reader Cache。
  * [Hotfix] 當 eventType 變更時，rowIndex 不可跨 sheet update，必須 delete + create (Move)。
+ * [Fix] deleteEventLog: 修正 Controller 呼叫斷裂，新增 eventId 解析邏輯。
  * 依賴注入：EventLogReader, EventLogWriter, OpportunityReader, CompanyReader, SystemReader, CalendarService
  */
 
@@ -210,6 +211,31 @@ class EventLogService {
         // 5) 沒有 eventType 變更 -> 正常 update
         const user = { displayName: modifier };
         return await this.updateEvent(rowIndex, data, user);
+    }
+
+    /**
+     * [Patch] 實作 Controller 所需的 deleteEventLog 介面
+     * 負責將 eventId 解析為 rowIndex 與 eventType 後刪除
+     */
+    async deleteEventLog(eventId, user) {
+        try {
+            // 1. 讀取所有事件以查找 eventId (解析 rowIndex 與 eventType)
+            const logs = await this.eventReader.getEventLogs();
+            const target = logs.find(l => l.eventId === eventId);
+
+            if (!target) {
+                throw new Error(`Delete Failed: Event ID '${eventId}' not found.`);
+            }
+
+            // 2. 呼叫底層 deleteEvent 進行實體刪除 (複用既有邏輯)
+            // 注意：deleteEvent 內部會呼叫 Writer 並 invalidate cache
+            console.log(`[EventLogService] Resolved delete for ${eventId} -> Row ${target.rowIndex} (${target.eventType})`);
+            return await this.deleteEvent(target.rowIndex, target.eventType, { displayName: user });
+
+        } catch (error) {
+            console.error(`[EventLogService] deleteEventLog Error (${eventId}):`, error);
+            throw error;
+        }
     }
 
     async deleteEvent(rowIndex, eventType, user) {
