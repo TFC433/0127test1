@@ -1,23 +1,26 @@
 /**
  * services/dashboard-service.js
  * 儀表板業務邏輯層 (Dashboard Aggregator)
- * * @version 6.0.0 (Fixed: Restore Weekly Details Integration)
- * @date 2026-01-14
+ * * @version 6.0.1 (Forensics Patch: Risk Annotation)
+ * @date 2026-01-29
  * @description 負責整合各個模組的數據，計算統計指標、圖表數據與 KPI。
- * 修正：恢復呼叫 weeklyBusinessService.getWeeklyDetails 以獲取完整的週曆結構（包含假日與 DX/AT 行事曆）。
+ * * [Forensics Notes]
+ * 1. [Direct Read] 本服務直接讀取 Opportunity/Contact/Interaction Reader 以優化效能。
+ * 2. [Shadow Logic] 內含 MTU/SI 活躍定義邏輯，未來應遷移至 CompanyService。
+ * 3. [Logic Duplication] _getWeekId 為暫時性重複邏輯，Phase 6 應統一注入 DateHelpers。
  */
 
 class DashboardService {
     /**
      * 建構子：接收所有必要的資料讀取器與服務
      * @param {Object} config - 系統設定
-     * @param {OpportunityReader} opportunityReader
-     * @param {ContactReader} contactReader
-     * @param {InteractionReader} interactionReader
-     * @param {EventLogReader} eventLogReader
+     * @param {OpportunityReader} opportunityReader - [Direct Read]
+     * @param {ContactReader} contactReader - [Direct Read]
+     * @param {InteractionReader} interactionReader - [Direct Read]
+     * @param {EventLogReader} eventLogReader - [Direct Read]
      * @param {SystemReader} systemReader
-     * @param {WeeklyBusinessService} weeklyBusinessService
-     * @param {CompanyReader} companyReader
+     * @param {WeeklyBusinessService} weeklyBusinessService - [Service Integration]
+     * @param {CompanyReader} companyReader - [Direct Read]
      * @param {CalendarService} calendarService
      */
     constructor(
@@ -49,7 +52,9 @@ class DashboardService {
 
     /**
      * 【內部輔助】取得週次 ID 
-     * (因 DashboardService 未注入 dateHelpers，故保留此內部實作以維持獨立性)
+     * [Logic Duplication] 警告：此邏輯與 DateHelpers 重複。
+     * 原因：目前 DashboardService 未注入 dateHelpers。
+     * TODO: [Phase 6] 修改 DI Container 注入 DateHelpers，並移除此方法。
      */
     _getWeekId(date) {
         const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -117,9 +122,9 @@ class DashboardService {
 
         if (this.weeklyBusinessService) {
             try {
-                // ★★★ 關鍵修正：呼叫 getWeeklyDetails (而非 getEntriesForWeek) ★★★
-                // 這會回傳完整的物件：{ id, title, days: [...], entries: [...] }
-                // 包含了 DX/AT 行事曆與國定假日資訊，解決前端卡片空白問題
+                // [Standard A Compliance] 
+                // 正確呼叫 Service 層方法，而非直接讀取 Reader。
+                // 這裡複用了 WeeklyService 的 Join 邏輯 (Calendar + System Config)。
                 const fullDetails = await this.weeklyBusinessService.getWeeklyDetails(thisWeekId);
                 
                 if (fullDetails) {
@@ -167,7 +172,11 @@ class DashboardService {
         const opportunitiesCountMonth = opportunities.filter(o => new Date(o.createdTime) >= startOfMonth).length;
         const eventLogsCountMonth = eventLogs.filter(e => new Date(e.createdTime) >= startOfMonth).length;
 
-        // MTU/SI 活躍與家數統計邏輯
+        // =================================================================
+        // [RISK: Shadow Logic] MTU/SI 活躍與家數統計邏輯
+        // TODO: [Phase 6] 這裡包含了 "Active Company" 的領域定義，
+        // 應遷移至 CompanyService.getCompanyStats() 以避免真值二元性。
+        // =================================================================
         const normalize = (name) => (name || '').trim().toLowerCase();
         
         // 準備工具: Name -> ID 對照表
@@ -242,6 +251,7 @@ class DashboardService {
                  if (firstTime >= startOfMonth.getTime()) siNewMonth++;
              }
         });
+        // [End of Shadow Logic]
 
         // 成交案件統計
         // 寬鬆判斷：包含 '受注', '已成交', '已完成'
