@@ -1,14 +1,18 @@
 /**
  * services/event-log-service.js
  * 事件紀錄服務邏輯
- * @version 5.1.4 (Phase 5 - Standard A Refactoring Hotfix: Fix DELETE & Mapping)
+ * @version 5.2.0 (Phase 5 - SQL Reader Fallback Injection)
  * @date 2026-01-29
  * @description
  * [Standard A] Join 邏輯集中在 Service；所有回傳物件皆 clone，避免污染 Reader Cache。
  * [Hotfix] 當 eventType 變更時，rowIndex 不可跨 sheet update，必須 delete + create (Move)。
  * [Fix] deleteEventLog: 修正 Controller 呼叫斷裂，新增 eventId 解析邏輯。
+ * [Test] 注入 EventLogSqlReader 供讀取測試，失敗時 Fallback 至 Sheet Reader。
  * 依賴注入：EventLogReader, EventLogWriter, OpportunityReader, CompanyReader, SystemReader, CalendarService
  */
+
+// [Patch] 引入 SQL Reader 供測試期雙軌並行
+const EventLogSqlReader = require('../data/event-log-sql-reader');
 
 class EventLogService {
     constructor(eventReader, eventWriter, oppReader, companyReader, systemReader, calendarService) {
@@ -18,6 +22,9 @@ class EventLogService {
         this.companyReader = companyReader;
         this.systemReader = systemReader;
         this.calendarService = calendarService;
+
+        // [Patch] 測試期硬性注入 SQL Reader (不經由 DI Container)
+        this.sqlReader = new EventLogSqlReader();
     }
 
     _invalidateEventCacheSafe() {
@@ -35,8 +42,22 @@ class EventLogService {
 
     async getAllEvents() {
         try {
-            const [events, opps, comps] = await Promise.all([
-                this.eventReader.getEventLogs(),
+            // [Patch Start] SQL Read Priority with Fallback
+            let events;
+            try {
+                events = await this.sqlReader.getEventLogs();
+                // 簡易驗證：若 SQL 回傳非陣列或 null，視為失敗
+                if (!Array.isArray(events)) throw new Error('SQL returned invalid structure');
+                console.log('[EventLogService] getAllEvents: Serving from SQL Reader');
+            } catch (sqlError) {
+                console.error('[EventLogService] getAllEvents: SQL Read Failed, fallback to Sheet.', sqlError.message);
+                // Fallback: 使用原本的 Sheet Reader
+                events = await this.eventReader.getEventLogs();
+            }
+            // [Patch End]
+
+            // [Modified] 將原本 Promise.all 中的 getEventLogs 移除，因為 events 已在上方取得
+            const [opps, comps] = await Promise.all([
                 this.oppReader.getOpportunities(),
                 this.companyReader.getCompanyList()
             ]);
@@ -63,7 +84,19 @@ class EventLogService {
 
     async getEventById(eventId) {
         try {
-            const rawEvent = await this.eventReader.getEventLogById(eventId);
+            // [Patch Start] SQL Read Priority with Fallback
+            let rawEvent;
+            try {
+                rawEvent = await this.sqlReader.getEventLogById(eventId);
+                if (!rawEvent) throw new Error(`Event ${eventId} not found in SQL`);
+                console.log(`[EventLogService] getEventById: Serving ${eventId} from SQL Reader`);
+            } catch (sqlError) {
+                console.error(`[EventLogService] getEventById: SQL Read Failed for ${eventId}, fallback to Sheet.`, sqlError.message);
+                // Fallback: 使用原本的 Sheet Reader
+                rawEvent = await this.eventReader.getEventLogById(eventId);
+            }
+            // [Patch End]
+
             if (!rawEvent) return null;
 
             const event = { ...rawEvent }; // clone
@@ -144,6 +177,7 @@ class EventLogService {
         const inputEventId = data?.eventId || data?.id || null;
 
         // 2) 先讀全列表（這裡是必要的：用來解析原始 rowIndex / 原 eventType）
+        // [Note] Update 流程必須依賴 Sheet 的 rowIndex，因此直接呼叫 Sheet Reader，不走 SQL fallback 邏輯
         const logs = await this.eventReader.getEventLogs();
 
         let original = null;
@@ -220,6 +254,7 @@ class EventLogService {
     async deleteEventLog(eventId, user) {
         try {
             // 1. 讀取所有事件以查找 eventId (解析 rowIndex 與 eventType)
+            // [Note] Delete 流程必須依賴 Sheet 的 rowIndex，因此直接呼叫 Sheet Reader，不走 SQL fallback 邏輯
             const logs = await this.eventReader.getEventLogs();
             const target = logs.find(l => l.eventId === eventId);
 
